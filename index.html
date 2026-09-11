@@ -11,51 +11,110 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            height: 100vh;
+            min-height: 100vh;
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             transition: background 2s ease, filter 2s ease;
         }
         .night-mode {
-            filter: brightness(0.85); /* Slightly dims the white background at night */
+            filter: brightness(0.85);
             background: linear-gradient(135deg, #e0e0e0, #cccccc);
         }
         #clock {
-            font-size: 6rem;
+            font-size: 4rem;
             font-weight: bold;
         }
         #date {
-            font-size: 2rem;
-            margin-top: 1rem;
+            font-size: 1.3rem;
+            margin-top: 0.3rem;
             color: #555;
         }
         #info-container {
             display: flex;
             gap: 2rem;
-            margin-top: 1.5rem;
+            margin-top: 0.8rem;
             color: #666;
-            font-size: 1.1rem;
-        }
-        #calendar-container {
-            margin-top: 2rem;
-            background: rgba(0, 0, 0, 0.03);
-            padding: 1rem 2rem;
-            border-radius: 10px;
-            text-align: center;
-            max-width: 600px;
-            border: 1px solid #ddd;
-        }
-        #calendar-title {
-            font-size: 1.2rem;
-            color: #333;
-            margin-bottom: 0.5rem;
-            font-weight: bold;
-        }
-        #calendar-events {
             font-size: 1rem;
+        }
+        #weekly-wrapper {
+            margin-top: 1.5rem;
+            width: 80%;
+            max-width: 800px;
+            background: rgba(0, 0, 0, 0.03);
+            padding: 1.2rem;
+            border-radius: 12px;
+            border: 1px solid #ddd;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+        }
+        .card-title {
+            font-size: 1rem;
+            color: #333;
+            margin-bottom: 0.6rem;
+            font-weight: bold;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .add-hint {
+            font-size: 0.75rem;
+            color: #0066cc;
+            font-weight: normal;
+            text-transform: none;
+            text-decoration: none;
+        }
+        .add-hint:hover {
+            text-decoration: underline;
+        }
+        #weekly-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            margin-top: 0.8rem;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e5e5e5;
+            overflow: hidden;
+        }
+        .day-column {
+            padding: 0.8rem 0.5rem;
+            min-height: 100px;
+            font-size: 0.85rem;
+            border-right: 1px solid #e5e5e5;
+            background: #fff;
+        }
+        .day-column.today-highlight {
+            background: #FAFFC4;
+        }
+        .day-column:last-child {
+            border-right: none;
+        }
+        .day-name {
+            font-weight: bold;
+            color: #222;
+            text-align: center;
+            margin-bottom: 0.4rem;
+            font-size: 0.75rem;
+            text-transform: uppercase;
+        }
+        .day-events {
+            list-style: none;
+            padding: 0;
+            margin: 0;
             color: #555;
+            max-height: 120px;
+            overflow-y: auto;
+        }
+        .day-events li {
+            font-size: 0.75rem;
+            margin-bottom: 3px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
     </style>
+    <!-- Include iCal.js parser library -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/ical.js/1.5.0/ical.min.js"></script>
 </head>
 <body>
 
@@ -67,14 +126,24 @@
         <div id="sun-info">Loading sun schedule...</div>
     </div>
 
-    <div id="calendar-container">
-        <div id="calendar-title">Google Calendar</div>
-        <div id="calendar-events">Connecting to calendar soon...</div>
+    <!-- Weekly Overview Grid -->
+    <div id="weekly-wrapper">
+        <div class="card-title">
+            Weekly Overview 
+            <a href="https://calendar.google.com" target="_blank" class="add-hint">+ Add Plan</a>
+        </div>
+        <div id="weekly-grid">
+            <!-- Dynamically populated Monday-Sunday columns -->
+        </div>
     </div>
+
+    <!-- Load local config (ignored by git) -->
+    <script src="config.js"></script>
 
     <script>
         let sunriseTime = null;
         let sunsetTime = null;
+        let allEvents = [];
 
         // Fetch Atlanta Weather
         async function fetchWeather() {
@@ -96,11 +165,104 @@
                 if (data.status === "OK") {
                     sunriseTime = new Date(data.results.sunrise);
                     sunsetTime = new Date(data.results.sunset);
+                    
+                    const timeOptions = { hour: '2-digit', minute: '2-digit', hour12: true };
+                    const sunriseStr = sunriseTime.toLocaleTimeString('en-US', timeOptions);
+                    const sunsetStr = sunsetTime.toLocaleTimeString('en-US', timeOptions);
+
                     document.getElementById('sun-info').textContent = 
-                        `Sunrise: ${sunriseTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})} | Sunset: ${sunsetTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+                        `Sunrise: ${sunriseStr} | Sunset: ${sunsetStr}`;
                 }
             } catch (error) {
                 document.getElementById('sun-info').textContent = "Sun schedule unavailable";
+            }
+        }
+
+        // Fetch and parse real Google Calendar iCal feed via CORS proxy
+        async function fetchCalendarEvents() {
+            if (typeof CONFIG === 'undefined' || !CONFIG.CALENDAR_ICS_URL) return;
+            
+            try {
+                const proxyUrl = 'https://api.allorigins.win/raw?url=' + encodeURIComponent(CONFIG.CALENDAR_ICS_URL);
+                const response = await fetch(proxyUrl);
+                const icsData = await response.text();
+
+                const jcalData = ICAL.parse(icsData);
+                const comp = new ICAL.Component(jcalData);
+                const vevents = comp.getAllSubcomponents('vevent');
+
+                allEvents = [];
+                vevents.forEach(vevent => {
+                    const event = new ICAL.Event(vevent);
+                    const startDate = event.startDate.toJSDate();
+                    const endDate = event.endDate.toJSDate();
+
+                    allEvents.push({
+                        title: event.summary,
+                        start: startDate,
+                        end: endDate
+                    });
+                });
+
+                updateWeeklyGrid();
+
+            } catch (error) {
+                console.error("Error fetching calendar:", error);
+            }
+        }
+
+        function updateWeeklyGrid() {
+            const now = new Date();
+            allEvents.sort((a, b) => a.start - b.start);
+
+            // --- Weekly Overview Grid (Monday to Sunday) ---
+            const weeklyGridEl = document.getElementById('weekly-grid');
+            weeklyGridEl.innerHTML = '';
+
+            const currentDayOfWeek = now.getDay(); // 0 is Sunday, 1 is Monday, etc.
+            const distanceToMonday = currentDayOfWeek === 0 ? -6 : 1 - currentDayOfWeek;
+            
+            const monday = new Date(now);
+            monday.setDate(now.getDate() + distanceToMonday);
+
+            for (let i = 0; i < 7; i++) {
+                const targetDate = new Date(monday);
+                targetDate.setDate(monday.getDate() + i);
+
+                const dayCol = document.createElement('div');
+                dayCol.className = 'day-column';
+
+                // Highlight today's box with color #FAFFC4
+                if (targetDate.toDateString() === now.toDateString()) {
+                    dayCol.classList.add('today-highlight');
+                }
+
+                const dayNameEl = document.createElement('div');
+                dayNameEl.className = 'day-name';
+                dayNameEl.textContent = targetDate.toLocaleDateString('en-US', { weekday: 'short', month: 'numeric', day: 'numeric' });
+                dayCol.appendChild(dayNameEl);
+
+                const dayEventsList = document.createElement('ul');
+                dayEventsList.className = 'day-events';
+
+                const dayEvents = allEvents.filter(ev => ev.start.toDateString() === targetDate.toDateString());
+
+                if (dayEvents.length > 0) {
+                    dayEvents.forEach(ev => {
+                        const li = document.createElement('li');
+                        const timeStr = ev.start.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                        li.textContent = `${timeStr} ${ev.title}`;
+                        dayEventsList.appendChild(li);
+                    });
+                } else {
+                    const li = document.createElement('li');
+                    li.style.color = '#999';
+                    li.textContent = 'No events';
+                    dayEventsList.appendChild(li);
+                }
+
+                dayCol.appendChild(dayEventsList);
+                weeklyGridEl.appendChild(dayCol);
             }
         }
 
@@ -113,7 +275,7 @@
             const seconds = String(now.getSeconds()).padStart(2, '0');
             document.getElementById('clock').textContent = `${hours}:${minutes}:${seconds}`;
 
-            // Date in English (e.g., September 11, 2026, Friday)
+            // Date in English
             const options = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' };
             document.getElementById('date').textContent = now.toLocaleDateString('en-US', options);
 
@@ -125,10 +287,15 @@
                     document.body.classList.remove('night-mode');
                 }
             }
+
+            updateWeeklyGrid();
         }
 
         fetchWeather();
         fetchSunSchedule();
+        fetchCalendarEvents();
+        
+        setInterval(fetchCalendarEvents, 10 * 60 * 1000);
         setInterval(updateDashboard, 1000);
         updateDashboard();
     </script>
