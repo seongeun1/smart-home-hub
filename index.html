@@ -173,6 +173,7 @@
         }
 
         fetchWeather();
+        setInterval(fetchWeather, 10*60*1000)
         fetchSunSchedule();
         initCalendarEmbed();
         
