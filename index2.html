@@ -18,8 +18,8 @@ body { margin: 0; background: #101211; color: #f5f3ed; font-family: -apple-syste
 button, .link { border: 1px solid #ffffff40; border-radius: 24px; background: #ffffff12; color: inherit; padding: 10px 18px; font: inherit; cursor: pointer; text-decoration: none; }
 button:hover, .link:hover { background: #ffffff26; }
 button:focus-visible, .link:focus-visible { outline: 3px solid #d8e6af; outline-offset: 4px; }
-.controls { flex-wrap: wrap; max-width: calc(100% - 40px); position: absolute; top: 20px; right: 20px; display: flex; gap: 8px; opacity: 0; transition: opacity .2s; background: #10121180; padding: 8px; border-radius: 32px; }
-.photos:hover .controls, .controls:focus-within, body.show-controls .controls { opacity: 1; }
+.controls { flex-wrap: wrap; max-width: calc(100% - 40px); position: absolute; top: 20px; right: 20px; display: flex; gap: 8px; opacity: 0; pointer-events: none; transition: opacity .2s; background: #10121180; padding: 8px; border-radius: 32px; }
+.controls:has(:focus-visible), body.show-controls .controls { opacity: 1; pointer-events: auto; }
 .status { position: absolute; bottom: 230px; left: 24px; right: 24px; font-size: 13px; text-shadow: 0 1px 5px #000; }
 footer { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; background: transparent; pointer-events: none; text-shadow: 0 2px 8px #000, 0 1px 3px #000; display: flex; justify-content: space-between; align-items: center; gap: 24px; padding: 26px 5vw; min-height: 200px; }
 .weather { display: flex; align-items: center; gap: 18px; }
@@ -30,7 +30,6 @@ footer { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; backgroun
 #date { color: #eee; margin-top: 8px; font-size: clamp(18px, 2vw, 28px); }
 #weather-status { color: #eee; font-size: clamp(16px, 1.5vw, 22px); margin-top: 8px; }
 @media (max-width: 540px) { .status { bottom: 240px; left: 20px; right: 20px; } footer { padding: 20px; gap: 12px; } .weather { display: block; } .temperature { font-size: 44px; } #clock { font-size: 56px; } .label { margin-top: 6px; font-size: 14px; } #date { font-size: 16px; } #weather-status { font-size: 14px; } .controls { top: 10px; right: 10px; } }
-@media (hover: none) { .controls { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .slide { transition: none; } }
 </style>
 </head>
@@ -88,6 +87,28 @@ function takeRandomPhoto() {
     roundPosition++;
     return remainingPhotos.shift();
 }
+let controlsTimer = null;
+function showControls() {
+    document.body.classList.add('show-controls');
+    scheduleControlsHide();
+}
+function scheduleControlsHide() {
+    clearTimeout(controlsTimer);
+    controlsTimer = setTimeout(() => {
+        if (photos.length && byId('empty').hidden) document.body.classList.remove('show-controls');
+    }, 4000);
+}
+document.addEventListener('pointermove', showControls);
+document.addEventListener('pointerdown', showControls);
+document.addEventListener('keydown', showControls);
+let storageMessageTimer = null;
+function showStorageMessage(message, temporary = false) {
+    clearTimeout(storageMessageTimer);
+    byId('storage-status').textContent = message;
+    if (temporary) storageMessageTimer = setTimeout(() => {
+        byId('storage-status').textContent = '';
+    }, 4000);
+}
 let database = null;
 const selectedKeys = new Set();
 const configuredPhotos = Array.isArray(settings.PHOTO_URLS)
@@ -138,7 +159,7 @@ async function restorePhotos() {
         await restoreFolder();
     } catch {
         database = null;
-        byId('storage-status').textContent = 'Browser storage unavailable. Photos will only stay for this visit.';
+        showStorageMessage('Browser storage unavailable. Photos will only stay for this visit.');
     } finally { setSelectionBusy(false); }
 }
 const slides = [byId('slide-a'), byId('slide-b')];
@@ -168,7 +189,7 @@ async function nextPhoto() {
             byId('empty').hidden = true;
             lastPhotoUrl = photo.url;
             byId('status').textContent = `${roundPosition} / ${photos.length} · Shuffled`;
-            document.body.classList.remove('show-controls');
+            scheduleControlsHide();
             return;
         }
         byId('status').textContent = 'Unable to load these photos. Choose supported images or check their URLs.';
@@ -189,10 +210,10 @@ function setPhotos(items) {
 async function loadFiles(event) {
     const files = Array.from(event.target.files).filter(file => file.type.startsWith('image/')).sort((a, b) => a.name.localeCompare(b.name));
     event.target.value = '';
-    if (!files.length) { byId('storage-status').textContent = 'No supported images selected.'; return; }
+    if (!files.length) { showStorageMessage('No supported images selected.', true); return; }
     const records = files.map(file => ({ id: JSON.stringify([file.name, file.size, file.lastModified]), file }))
         .filter(record => !selectedKeys.has(record.id));
-    if (!records.length) { byId('storage-status').textContent = 'These photos are already in your slideshow.'; return; }
+    if (!records.length) { showStorageMessage('These photos are already in your slideshow.', true); return; }
     setSelectionBusy(true);
     let saved = false;
     try {
@@ -202,9 +223,9 @@ async function loadFiles(event) {
         }
     } catch { /* Keep displaying the selection even when storage is full. */ }
     appendPhotos(records);
-    byId('storage-status').textContent = saved
-        ? 'Photos saved in this browser. New selections will be added.'
-        : 'New photos added for this visit only. Browser storage is unavailable or full.';
+    showStorageMessage(saved
+        ? 'Photos added.'
+        : 'New photos added for this visit only. Browser storage is unavailable or full.', saved);
     setSelectionBusy(false);
 }
 byId('clear').onclick = async () => {
@@ -217,10 +238,10 @@ byId('clear').onclick = async () => {
         setPhotos([...configuredPhotos, ...watchedPhotos.values()]);
         previousUrls.forEach(url => URL.revokeObjectURL(url));
         byId('status').textContent = '';
-        byId('storage-status').textContent = 'Selected photos cleared. Your original files are unchanged.';
+        showStorageMessage('Selected photos cleared. Your original files are unchanged.', true);
         document.body.classList.add('show-controls');
     } catch {
-        byId('storage-status').textContent = 'Could not clear saved photos. Please try again.';
+        showStorageMessage('Could not clear saved photos. Please try again.');
     } finally { setSelectionBusy(false); }
 };
 // A saved directory handle lets us rescan the real folder instead of keeping a snapshot.
@@ -319,7 +340,7 @@ byId('watch').onclick = async () => {
                 remembered = true;
             }
         } catch { /* The folder can still be watched for the current visit. */ }
-        byId('storage-status').textContent = remembered ? 'Folder remembered in this browser.' : 'Folder is watched for this visit only; its access could not be saved.';
+        showStorageMessage(remembered ? 'Folder connected.' : 'Folder is watched for this visit only; its access could not be saved.', remembered);
         await scanFolder();
     } catch (error) {
         if (error.name !== 'AbortError') byId('folder-status').textContent = 'Folder access failed. Try desktop Chrome or Edge on localhost or HTTPS.';
