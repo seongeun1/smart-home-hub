@@ -11,6 +11,14 @@ body { margin: 0; background: #101211; color: #f5f3ed; font-family: -apple-syste
 .photos { position: relative; width: 100%; height: 100%; overflow: hidden; background: #101211; }
 .slide { position: absolute; width: 100%; height: 100%; object-fit: contain; object-position: center; opacity: 0; transition: opacity 1.5s ease; }
 .slide.active { opacity: 1; }
+.photo-info { position: absolute; z-index: 1; top: max(24px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); width: min(86%, 1000px); text-align: center; pointer-events: none; color: #fff; text-shadow: 0 2px 8px #000, 0 1px 3px #000; }
+#photo-location { font-size: clamp(16px, 1.6vw, 24px); font-weight: 500; }
+#photo-taken { font-size: clamp(16px, 1.6vw, 24px); margin-top: 8px; }
+#photo-credit { font-size: 11px; margin-top: 5px; }
+#photo-credit a { color: inherit; pointer-events: auto; }
+.controls { z-index: 3; }
+body.show-controls .photo-info { top: 120px; }
+@media (max-width: 540px) { #photo-location, #photo-taken { font-size: 14px; } body.show-controls .photo-info { top: 220px; } }
 .empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 28px; text-align: center; background: radial-gradient(ellipse at top, #344238, #151c18); }
 .empty h1 { font-family: Georgia, serif; font-weight: normal; font-size: clamp(32px, 5vw, 64px); margin: 0 0 16px; }
 .empty p { color: #c4cec6; max-width: 440px; line-height: 1.6; margin: 0 auto 22px; }
@@ -37,6 +45,10 @@ footer { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; backgroun
 <main class="frame">
 <section class="photos" aria-label="Photo slideshow">
 <img class="slide" alt="" id="slide-a"><img class="slide" alt="" id="slide-b">
+<div class="photo-info" id="photo-info" hidden aria-live="polite">
+<div id="photo-location"></div><div id="photo-taken"></div>
+<div id="photo-credit" hidden>Place names: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a></div>
+</div>
 <div class="empty" id="empty">
 <h1>A home for your memories.</h1>
 <p>Download your favorite pictures from Google Photos, then choose the photos or a folder to start your continuous slideshow.</p>
@@ -55,6 +67,8 @@ footer { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; backgroun
 </footer>
 </main>
 <script src="config.js"></script>
+<script src="vendor/exifr-7.1.3.umd.js"></script>
+<script src="vendor/cities15000.js"></script>
 <script>
 const settings = typeof CONFIG !== 'undefined' ? CONFIG : {};
 const byId = id => document.getElementById(id);
@@ -132,7 +146,7 @@ function appendPhotos(records) {
         selectedKeys.add(record.id);
         const url = URL.createObjectURL(record.file);
         ownedUrls.push(url);
-        const photo = { url, name: record.file.name };
+        const photo = { url, name: record.file.name, file: record.file };
         photos.push(photo);
         added.push(photo);
     }
@@ -162,6 +176,62 @@ async function restorePhotos() {
         showStorageMessage('Browser storage unavailable. Photos will only stay for this visit.');
     } finally { setSelectionBusy(false); }
 }
+let metadataDisplayVersion = 0;
+function clearPhotoInfo() {
+    metadataDisplayVersion++;
+    byId('photo-info').hidden = true;
+    byId('photo-location').textContent = '';
+    byId('photo-taken').textContent = '';
+    byId('photo-credit').hidden = true;
+}
+function captureTimeLabel(value, offset) {
+    // EXIF records the camera's wall-clock time. Keep it rather than converting to this device's timezone.
+    const match = typeof value === 'string' && value.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+    if (!match) return '';
+    const [, y, m, d, h, min, sec] = match.map(Number);
+    const date = new Date(Date.UTC(y, m - 1, d, h, min, sec));
+    if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d || h > 23 || min > 59 || sec > 59) return '';
+    const label = date.toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return `Taken ${label}${typeof offset === 'string' && /^[+-]\d{2}:\d{2}$/.test(offset) ? ` (UTC${offset})` : ''}`;
+}
+function locationLabel(latitude, longitude) {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return { label: '', credit: false };
+    const radians = value => value * Math.PI / 180;
+    let nearest = null, distance = Infinity;
+    for (const city of window.FRAME_CITIES || []) {
+        const a = Math.sin(radians(city[0] - latitude) / 2) ** 2 + Math.cos(radians(latitude)) * Math.cos(radians(city[0])) * Math.sin(radians(city[1] - longitude) / 2) ** 2;
+        const km = 6371 * 2 * Math.asin(Math.sqrt(Math.min(1, a)));
+        if (km < distance) { nearest = city; distance = km; }
+    }
+    if (nearest && distance <= 100) {
+        let country = nearest[3];
+        try { country = new Intl.DisplayNames(['en'], { type: 'region' }).of(country); } catch { /* Country code is a safe fallback. */ }
+        return { label: `Near ${nearest[2]}, ${country}`, credit: true };
+    }
+    return { label: `${Math.abs(latitude).toFixed(4)}°${latitude < 0 ? 'S' : 'N'}, ${Math.abs(longitude).toFixed(4)}°${longitude < 0 ? 'W' : 'E'}`, credit: false };
+}
+async function readPhotoInfo(photo) {
+    if (!window.exifr) return null;
+    try {
+        const data = await window.exifr.parse(photo.file || photo.url, {
+            reviveValues: false, ifd0: false, exif: true, gps: true, xmp: false, iptc: false, icc: false, jfif: false, ihdr: false
+        });
+        if (!data) return null;
+        return { taken: captureTimeLabel(data.DateTimeOriginal, data.OffsetTimeOriginal), ...locationLabel(data.latitude, data.longitude) };
+    } catch { return null; }
+}
+async function showPhotoInfo(photo) {
+    clearPhotoInfo();
+    const version = metadataDisplayVersion;
+    // Cache on the photo object; changed watched files get new objects and fresh metadata.
+    if (!photo.metadataPromise) photo.metadataPromise = readPhotoInfo(photo);
+    const info = await photo.metadataPromise;
+    if (version !== metadataDisplayVersion || !info) return;
+    byId('photo-location').textContent = info.label;
+    byId('photo-taken').textContent = info.taken;
+    byId('photo-credit').hidden = !info.credit;
+    byId('photo-info').hidden = !info.label && !info.taken;
+}
 const slides = [byId('slide-a'), byId('slide-b')];
 async function nextPhoto() {
     if (loading || !photos.length) return;
@@ -187,6 +257,7 @@ async function nextPhoto() {
             slides[active].classList.remove('active');
             active = incoming;
             byId('empty').hidden = true;
+            showPhotoInfo(photo);
             lastPhotoUrl = photo.url;
             byId('status').textContent = `${roundPosition} / ${photos.length} · Shuffled`;
             scheduleControlsHide();
@@ -196,6 +267,7 @@ async function nextPhoto() {
     } finally { if (version === generation) loading = false; }
 }
 function setPhotos(items) {
+    clearPhotoInfo();
     generation++;
     loading = false;
     photos = items;
@@ -298,7 +370,7 @@ async function scanFolder() {
             if (previous?.fingerprint === fingerprint) next.set(path, previous);
             else {
                 changed = true;
-                next.set(path, { url: URL.createObjectURL(file), name: file.name, folderPath: path, fingerprint });
+                next.set(path, { url: URL.createObjectURL(file), name: file.name, file, folderPath: path, fingerprint });
             }
         }
         if (changed) replaceWatchedPhotos(next);

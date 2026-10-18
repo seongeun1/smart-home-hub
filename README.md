@@ -40,3 +40,9 @@ Then open http://localhost:8000/index2.html. Keep the same address and browser p
 API reference: https://developer.chrome.com/docs/capabilities/web-apis/file-system-access
 
 Photos play in random rounds: each photo appears once per round, and the order is shuffled again afterward. With multiple photos, round boundaries do not repeat the same photo back-to-back; with three or more, consecutive rounds do not use identical orders. Changing the watched folder contents starts a fresh round.
+
+## Photo capture information
+
+The top-center overlay shows EXIF `DateTimeOriginal` in the camera's recorded local time (and recorded UTC offset when present), plus the nearest city to embedded GPS coordinates. The clock at the bottom continues to show the current time. Missing capture time or GPS is omitted; file modification dates are never substituted. No overlay is shown if neither detail exists. Metadata parsing errors do not interrupt the slideshow.
+
+Photo metadata is read locally with the bundled exifr 7.1.3 library (MIT license in `vendor/exifr-LICENSE.txt`). Place names are resolved locally using the bundled GeoNames cities15000 dataset (CC BY 4.0; see `vendor/geonames-NOTICE.txt`). Labels say “Near” because this dataset contains cities and larger towns, not exact addresses. For locations more than 100 km from a listed city, GPS coordinates are shown instead. Photos and coordinates are not sent to a geocoding service. Keep the `vendor/` folder beside `index2.html`.

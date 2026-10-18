@@ -1,0 +1,7 @@
+Source: GeoNames cities15000 dataset
+https://download.geonames.org/export/dump/cities15000.zip
+https://www.geonames.org/
+Retrieved: 2026-10-18
+License: Creative Commons Attribution 4.0
+https://creativecommons.org/licenses/by/4.0/
+Changes: retained latitude, longitude, city name and country code; converted to a JavaScript array.
