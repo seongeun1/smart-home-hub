@@ -47,7 +47,6 @@ footer { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; backgroun
 <img class="slide" alt="" id="slide-a"><img class="slide" alt="" id="slide-b">
 <div class="photo-info" id="photo-info" hidden aria-live="polite">
 <div id="photo-location"></div><div id="photo-taken"></div>
-<div id="photo-credit" hidden>Place names: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a></div>
 </div>
 <div class="empty" id="empty">
 <h1>A home for your memories.</h1>
@@ -56,6 +55,7 @@ footer { position: absolute; z-index: 2; bottom: 0; left: 0; right: 0; backgroun
 </div>
 <div class="controls" aria-label="Frame controls">
 <button id="choose">Add photos</button><button id="folder">Add folder</button><button id="watch">Watch folder</button><button id="reconnect" hidden>Reconnect folder</button><button id="unwatch" hidden>Stop watching</button><button id="clear">Clear saved photos</button><button id="pause" aria-label="Pause slideshow">Pause</button><button id="fullscreen">Full screen</button>
+<div id="photo-credit" hidden>Place names: <a href="https://www.geonames.org/" target="_blank" rel="noopener noreferrer">GeoNames</a></div>
 </div>
 <div class="status"><div id="folder-status" role="status"></div><div id="storage-status" role="status"></div><div id="status" role="status"></div></div>
 <input type="file" id="files" accept="image/*" multiple hidden>
@@ -184,15 +184,14 @@ function clearPhotoInfo() {
     byId('photo-taken').textContent = '';
     byId('photo-credit').hidden = true;
 }
-function captureTimeLabel(value, offset) {
+function captureTimeLabel(value) {
     // EXIF records the camera's wall-clock time. Keep it rather than converting to this device's timezone.
     const match = typeof value === 'string' && value.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
     if (!match) return '';
     const [, y, m, d, h, min, sec] = match.map(Number);
     const date = new Date(Date.UTC(y, m - 1, d, h, min, sec));
     if (date.getUTCFullYear() !== y || date.getUTCMonth() !== m - 1 || date.getUTCDate() !== d || h > 23 || min > 59 || sec > 59) return '';
-    const label = date.toLocaleString('en-US', { timeZone: 'UTC', year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    return `Taken ${label}${typeof offset === 'string' && /^[+-]\d{2}:\d{2}$/.test(offset) ? ` (UTC${offset})` : ''}`;
+    return `${match[1]}/${match[2]}/${match[3]} ${match[4]}:${match[5]}`;
 }
 function locationLabel(latitude, longitude) {
     if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) return { label: '', credit: false };
@@ -205,8 +204,8 @@ function locationLabel(latitude, longitude) {
     }
     if (nearest && distance <= 100) {
         let country = nearest[3];
-        try { country = new Intl.DisplayNames(['en'], { type: 'region' }).of(country); } catch { /* Country code is a safe fallback. */ }
-        return { label: `Near ${nearest[2]}, ${country}`, credit: true };
+        try { country = new Intl.DisplayNames(['en'], { type: 'region' }).of(country); } catch { /* Fall back to the country code. */ }
+        return { label: `${nearest[2]}, ${country}`, credit: true };
     }
     return { label: `${Math.abs(latitude).toFixed(4)}°${latitude < 0 ? 'S' : 'N'}, ${Math.abs(longitude).toFixed(4)}°${longitude < 0 ? 'W' : 'E'}`, credit: false };
 }
@@ -217,7 +216,7 @@ async function readPhotoInfo(photo) {
             reviveValues: false, ifd0: false, exif: true, gps: true, xmp: false, iptc: false, icc: false, jfif: false, ihdr: false
         });
         if (!data) return null;
-        return { taken: captureTimeLabel(data.DateTimeOriginal, data.OffsetTimeOriginal), ...locationLabel(data.latitude, data.longitude) };
+        return { taken: captureTimeLabel(data.DateTimeOriginal), ...locationLabel(data.latitude, data.longitude) };
     } catch { return null; }
 }
 async function showPhotoInfo(photo) {
